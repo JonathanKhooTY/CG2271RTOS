@@ -14,7 +14,8 @@ typedef enum {RED, GREEN, BLUE} colors_t;
 // PWM Motor Constants
 #define PTB0_Pin 0
 #define PTB1_Pin 1
-
+#define PTE20_Pin 20
+#define PTE21_Pin 21
 #define CLOCK_FREQ 48000000
 #define PRESCALER  128
 
@@ -27,11 +28,11 @@ typedef enum {RED, GREEN, BLUE} colors_t;
 #define UART_TX_PORTE22 22
 #define UART_RX_PORTE23 23
 #define UART2_INT_PRIO 128
- 
 
-/*----------------------------------------------------------------------------
- * LED Functions
- *---------------------------------------------------------------------------*/
+#define SW_POS 6
+int on_off = 0;
+
+
 void initGPIO() 
 { 
  // Enable Clock to PORTB and PORTD 
@@ -53,47 +54,55 @@ void initGPIO()
  PTD->PDDR |= MASK(BLUE_LED); 
 } 
 
+void initSwitch(void){
+	
+		//enabling clock for PortD
+		SIM->SCGC5 |= SIM_SCGC5_PORTD_MASK;
+	
+		//Select GPIO and enable pullup resistors and interrupts on
+		//falling edges of pin connected to switch
+	
+		PORTD->PCR[SW_POS] |= (PORT_PCR_MUX(1) |
+													 PORT_PCR_PS_MASK |
+													 PORT_PCR_PE_MASK |
+													 PORT_PCR_IRQC(0x0a));
+	
+		//set PORTD switch bit to input
+		PTD->PDDR &= ~MASK(SW_POS);
+	
+	//enable interrupts
+	NVIC_SetPriority(PORTD_IRQn,2);
+	NVIC_ClearPendingIRQ(PORTD_IRQn);
+	NVIC_EnableIRQ(PORTD_IRQn);
+}
 
-void offRGB(){
-  PTB->PSOR = MASK(RED_LED) | MASK(GREEN_LED);
-  PTD->PSOR = MASK(BLUE_LED);
+void PORTD_IRQHandler() {
+		//Clear pending IRQ
+	NVIC_ClearPendingIRQ(PORTD_IRQn);
+	
+	on_off ^= 1;
+	
+	//clear INT flag. Interrupt Status Flag Register
+	PORTD->ISFR |= MASK(SW_POS);
 }
 
 
-void led_control(colors_t color, long on_off){
-  if (on_off) {      // On
-    switch(color){
-    case RED:
-      PTB->PCOR = MASK(RED_LED);
-      break;
-    case GREEN:
-      PTB->PCOR = MASK(GREEN_LED);
-      break;
-    case BLUE:
-      PTD->PCOR = MASK(BLUE_LED);
-      break;
-    }
-  } else {           // Off
-    switch(color){
-    case RED:
-      PTB->PSOR = MASK(RED_LED);
-      break;
-    case GREEN:
-      PTB->PSOR = MASK(GREEN_LED);
-      break;
-    case BLUE:
-      PTD->PSOR = MASK(BLUE_LED);
-      break;
-    }
-  }
-}
+
+
 
 /*----------------------------------------------------------------------------
  * PWM Functions
  *---------------------------------------------------------------------------*/
 void initPWM(uint32_t mod) {
   SIM_SCGC5 |= SIM_SCGC5_PORTB_MASK;
-  
+	SIM_SCGC5 |= SIM_SCGC5_PORTE_MASK;
+	
+  PORTE->PCR[PTE20_Pin] &= ~PORT_PCR_MUX_MASK; 
+  PORTE->PCR[PTE20_Pin] |= PORT_PCR_MUX(3);
+	
+	PORTE->PCR[PTE21_Pin] &= ~PORT_PCR_MUX_MASK; 
+  PORTE->PCR[PTE21_Pin] |= PORT_PCR_MUX(3);
+	
   PORTB->PCR[PTB0_Pin] &= ~PORT_PCR_MUX_MASK; 
   PORTB->PCR[PTB0_Pin] |= PORT_PCR_MUX(3);
   
@@ -131,54 +140,7 @@ void motor_control(long on_off, uint32_t mod) {
   }
 }
 
-/*----------------------------------------------------------------------------
- * UART Functions
- *---------------------------------------------------------------------------*/
-/*
-void initUART2(uint32_t baud_rate) {
-  uint32_t divisor, bus_clock;
-  
-  SIM->SCGC4 |= SIM_SCGC4_UART2_MASK;
-  SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;
-    
-  // Enable Port E Pins 22 and 23 and use their alt 4 function
-  PORTE->PCR[UART_TX_PORTE22] &= ~PORT_PCR_MUX_MASK;
-  PORTE->PCR[UART_TX_PORTE22] |= PORT_PCR_MUX(4);
-  
-  PORTE->PCR[UART_RX_PORTE23] &= ~PORT_PCR_MUX_MASK;
-  PORTE->PCR[UART_RX_PORTE23] |= PORT_PCR_MUX(4);
 
-  // Disable Tx and Rx before configuration
-  UART2->C2 &= ~(UART_C2_TE_MASK | UART_C2_RE_MASK);
-
-Kai Jie, [11.03.21 20:31]
-// Set baud rate to desired value
-  bus_clock = DEFAULT_SYSTEM_CLOCK/2;
-  divisor = bus_clock/(baud_rate * 16);
-  UART2->BDH = UART_BDH_SBR(divisor >> 8);
-  UART2->BDL = UART_BDL_SBR(divisor);
-  
-    // No Parity, 8 bits
-  UART2->C1 = 0;
-  UART2->S2 = 0;
-  UART2->C3 = 0;
-  
-  // Enable Tx and Rx
-  UART2->C2 |= UART_C2_TE_MASK | UART_C2_RE_MASK;
-}
-
-
-void UART2_Transmit_Poll(uint8_t data) {
-  while(!(UART2->S1 & UART_S1_TDRE_MASK));
-  UART2->D = data;
-}
-
-uint8_t UART2_Receive_Poll() {
-  while(!(UART2->S1 & UART_S1_RDRF_MASK));
-  return UART2->D;
-}
-
-*/
 // Delay 
 static void delay(volatile uint32_t nof) {
   while(nof!=0) {
@@ -187,34 +149,6 @@ static void delay(volatile uint32_t nof) {
   }
 }
 
-void processData(uint8_t data, uint32_t mod) {
-  colors_t colors[] = {RED, GREEN, BLUE};
-  
-  /*
-  data[0] - 0 if LED, 1 if motor
-
-  LED:
-  data[1] - 0 if Off, 1 if On
-  data[2:4] - 0 if Red, 1 if Green, 2 if Blue
-  
-  Motor:
-  data[1] - 0 if Off, 1 if On
-  */
-  
-  int led_motor = data % 2;   //0 if led, 1 if motor
-  
-  int on_off = (data >> 1) % 2;
-  
-  if (!led_motor) {            // Led
-    uint8_t color_code = data >> 2;
-    
-    led_control(colors[color_code], on_off);
-    
-  } else {                    // Motor
-    motor_control(on_off, mod);
-  
-  }
-}
 
 /*----------------------------------------------------------------------------
  * Main Function
@@ -224,11 +158,8 @@ int main() {
 
   
   SystemCoreClockUpdate();
-  
-  //initUART2(BAUD_RATE);  
-  
+  initSwitch();  
   initGPIO();
-  //offRGB();
   
   uint32_t mod = CLOCK_FREQ / PRESCALER /FREQ;
 
@@ -236,12 +167,9 @@ int main() {
   TPM1_C0V = 0;
   TPM1_C1V = 0;
 
-  //volatile uint8_t data = 0x01;
+ 
   
-  while(1) {
-    // Receive commands for LED
-   // data = UART2_Receive_Poll();
-    //processData(data, mod);
-		motor_control(0, mod);
+  while(1) {	
+		motor_control(on_off, mod);
   }
 }
